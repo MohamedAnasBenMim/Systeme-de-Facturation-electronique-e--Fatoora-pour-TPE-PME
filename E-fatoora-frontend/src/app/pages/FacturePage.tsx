@@ -1,6 +1,30 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import api from "../../services/api";
 import factureService from "../../services/factureService";
+
+interface LigneFactureResponse {
+  id: number;
+  product_id: number;
+  designation: string;
+  quantite: number;
+  prix_unitaire: number;
+  montant_ligne: number;
+}
+
+interface FactureResponse {
+  id: number;
+  client_id: number;
+  entreprise_id: number;
+  total_ht: number;
+  tva: number;
+  timbre_fiscal: number;
+  total_ttc: number;
+  date_creation: string;
+  date_echeance: string | null;
+  statut: StatutFacture;
+  pdf_path: string | null;
+  lignes: LigneFactureResponse[];
+}
 
 interface Client {
   id: number;
@@ -11,31 +35,6 @@ interface Client {
   matricule_fiscal?: string;
 }
 
-interface Entreprise {
-  id: number;
-  nom: string;
-  adresse?: string;
-  telephone?: string;
-  email?: string;
-  logo_url?: string;
-  matricule_fiscal?: string;
-  rib?: string;
-}
-
-interface Produit {
-  id: number;
-  designation: string;
-  prix_unitaire: number;
-}
-
-interface LigneFacture {
-  product_id: number;
-  designation: string;
-  quantite: number;
-  prix_unitaire: number;
-  montant_ligne: number;
-}
-
 type StatutFacture = "BROUILLON" | "ENVOYEE" | "PAYEE" | "ANNULEE";
 
 const formatCurrency = (val: number) =>
@@ -44,697 +43,500 @@ const formatCurrency = (val: number) =>
     maximumFractionDigits: 3,
   }) + " DT";
 
-const calcTotaux = (lignes: LigneFacture[]) => {
-  const total_ht = lignes.reduce((s, l) => s + l.montant_ligne, 0);
-  const tva = Math.round(total_ht * 0.19 * 1000) / 1000;
-  const timbre_fiscal = 1.0;
-  const total_ttc = Math.round((total_ht + tva + timbre_fiscal) * 1000) / 1000;
-  return {
-    total_ht: Math.round(total_ht * 1000) / 1000,
-    tva,
-    timbre_fiscal,
-    total_ttc,
+const formatDate = (d: string | null) =>
+  d ? new Date(d).toLocaleDateString("fr-FR") : "—";
+
+// ✅ FIX : extraction robuste qui couvre toutes les structures possibles
+const extractArray = <T,>(data: any, fallbackKeys: string[] = []): T[] => {
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  // Cherche dans les clés connues + fallbackKeys
+  for (const key of ["items", "data", "results", "factures", "clients", ...fallbackKeys]) {
+    if (Array.isArray(data[key])) return data[key];
+  }
+  console.warn("⚠️ Structure API inattendue :", data);
+  return [];
+};
+
+const STATUT_MAP: Record<StatutFacture, { label: string; cls: string }> = {
+  BROUILLON: { label: "Brouillon", cls: "bg-amber-100 text-amber-700 border-amber-200" },
+  ENVOYEE:   { label: "Envoyée",   cls: "bg-blue-100 text-blue-700 border-blue-200" },
+  PAYEE:     { label: "Payée",     cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  ANNULEE:   { label: "Annulée",   cls: "bg-red-100 text-red-700 border-red-200" },
+};
+
+function StatusBadge({ statut }: { statut: string }) {
+  // ✅ FIX : accepte n'importe quelle string, pas seulement StatutFacture
+  const s = STATUT_MAP[statut as StatutFacture] ?? {
+    label: statut,
+    cls: "bg-gray-100 text-gray-600 border-gray-200",
   };
-};
-
-const todayStr = () => new Date().toISOString().split("T")[0];
-const nextMonthStr = () => {
-  const d = new Date();
-  d.setMonth(d.getMonth() + 1);
-  return d.toISOString().split("T")[0];
-};
-
-const toArray = <T,>(payload: any): T[] => {
-  if (Array.isArray(payload)) return payload;
-  return payload?.items ?? payload?.data ?? payload?.results ?? payload?.clients ?? [];
-};
-
-function StatusBadge({ statut }: { statut: StatutFacture }) {
-  const map: Record<StatutFacture, { label: string; cls: string }> = {
-    BROUILLON: { label: "Brouillon", cls: "bg-amber-100 text-amber-700 border-amber-200" },
-    ENVOYEE: { label: "Envoyée", cls: "bg-blue-100 text-blue-700 border-blue-200" },
-    PAYEE: { label: "Payée", cls: "bg-emerald-100 text-emerald-700 border-emerald-200" },
-    ANNULEE: { label: "Annulée", cls: "bg-red-100 text-red-700 border-red-200" },
-  };
-
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full border ${map[statut].cls}`}>
-      {map[statut].label}
+    <span className={`inline-flex items-center px-2.5 py-0.5 text-xs font-medium rounded-full border ${s.cls}`}>
+      {s.label}
     </span>
   );
 }
 
-function IconPlus() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
-    </svg>
-  );
-}
-
-function IconTrash() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-    </svg>
-  );
-}
-
-function IconEye() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-    </svg>
-  );
-}
-
-function IconMail() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-    </svg>
-  );
-}
-
-function IconCheck() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-    </svg>
-  );
-}
-
-function IconArrowLeft() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-    </svg>
-  );
-}
-
-function PreviewModal({
-  open,
-  onClose,
-  entreprise,
+function DetailModal({
+  facture,
   client,
-  lignes,
-  totaux,
-  dateEcheance,
-  factureNo,
-  statut,
+  onClose,
+  onChangeStatut,
+  onDownloadPdf,
 }: {
-  open: boolean;
-  onClose: () => void;
-  entreprise: Entreprise | null;
+  facture: FactureResponse;
   client: Client | null;
-  lignes: LigneFacture[];
-  totaux: ReturnType<typeof calcTotaux>;
-  dateEcheance: string;
-  factureNo: string;
-  statut: StatutFacture;
+  onClose: () => void;
+  onChangeStatut: (id: number, statut: StatutFacture) => Promise<void>;
+  onDownloadPdf: (id: number) => Promise<void>;
 }) {
-  if (!open) return null;
+  const [loadingStatut, setLoadingStatut] = useState(false);
+
+  const handleStatut = async (statut: StatutFacture) => {
+    setLoadingStatut(true);
+    await onChangeStatut(facture.id, statut);
+    setLoadingStatut(false);
+  };
+
+  const actions: { label: string; statut: StatutFacture; cls: string }[] = [];
+  if (facture.statut === "BROUILLON") {
+    actions.push({ label: "Marquer Envoyée", statut: "ENVOYEE", cls: "border-blue-200 text-blue-700 hover:bg-blue-50" });
+    actions.push({ label: "Annuler",         statut: "ANNULEE", cls: "border-red-200 text-red-600 hover:bg-red-50" });
+  }
+  if (facture.statut === "ENVOYEE") {
+    actions.push({ label: "Marquer Payée",   statut: "PAYEE",   cls: "border-emerald-200 text-emerald-700 hover:bg-emerald-50" });
+    actions.push({ label: "Annuler",         statut: "ANNULEE", cls: "border-red-200 text-red-600 hover:bg-red-50" });
+  }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60">
-      <div className="bg-white w-full max-w-[210mm] max-h-[95vh] overflow-auto shadow-2xl">
-        <div className="p-8 min-h-[297mm]">
-          <div className="flex items-start justify-between mb-8">
-            <div className="flex-1">
-              <p className="text-lg font-bold text-gray-900">{entreprise?.nom ?? "—"}</p>
-              <p className="text-sm text-gray-500 mt-1">{entreprise?.adresse ?? ""}</p>
-              <p className="text-sm text-gray-500">{entreprise?.telephone ?? ""}</p>
-              <p className="text-sm text-gray-500">{entreprise?.email ?? ""}</p>
-              {entreprise?.matricule_fiscal && <p className="text-xs text-gray-400 mt-1">MF : {entreprise.matricule_fiscal}</p>}
-              {entreprise?.rib && <p className="text-xs text-gray-400">RIB : {entreprise.rib}</p>}
-            </div>
-
-            <div className="w-28 h-20 border border-gray-200 flex items-center justify-center overflow-hidden bg-white rounded-md">
-              {entreprise?.logo_url ? (
-                <img src={entreprise.logo_url} alt="Logo entreprise" className="w-full h-full object-contain" />
-              ) : (
-                <span className="text-xs text-gray-400">LOGO</span>
-              )}
-            </div>
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-slate-900 text-lg">Facture #{facture.id}</h3>
+            <p className="text-xs text-slate-400 font-mono mt-0.5">Créée le {formatDate(facture.date_creation)}</p>
           </div>
+          <StatusBadge statut={facture.statut} />
+        </div>
 
-          <div className="flex items-center justify-between mb-6 pb-4 border-b-2 border-slate-900">
-            <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight">FACTURE</h1>
-              <p className="text-sm text-slate-500 font-mono mt-0.5">N° {factureNo || "——"}</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-6 mb-8">
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
             <div className="bg-slate-50 rounded-xl p-4">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Facturé à</p>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Client</p>
               {client ? (
                 <>
-                  <p className="font-bold text-slate-900">
+                  <p className="font-semibold text-slate-800">
                     {`${client.prenom ?? ""} ${client.nom ?? ""}`.trim() || `Client #${client.id}`}
                   </p>
-                  <p className="text-sm text-slate-500">{client.email ?? ""}</p>
+                  {/* ✅ Email affiché */}
+                  <p className="text-sm text-blue-600">{client.email ?? "—"}</p>
                   <p className="text-sm text-slate-500">{client.adresse ?? ""}</p>
-                  {client.matricule_fiscal && <p className="text-xs text-slate-400 mt-1">MF : {client.matricule_fiscal}</p>}
+                  {client.matricule_fiscal && (
+                    <p className="text-xs text-slate-400 mt-1">MF : {client.matricule_fiscal}</p>
+                  )}
                 </>
               ) : (
-                <p className="text-slate-400 italic">Aucun client sélectionné</p>
+                <p className="text-slate-400 italic text-sm">Client #{facture.client_id}</p>
               )}
             </div>
 
             <div className="bg-slate-50 rounded-xl p-4">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2">Dates</p>
-              <div className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Émission</span>
-                  <span className="font-medium text-slate-800">{todayStr()}</span>
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Création</span>
+                  <span className="font-medium text-slate-800">{formatDate(facture.date_creation)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
+                <div className="flex justify-between">
                   <span className="text-slate-500">Échéance</span>
-                  <span className="font-medium text-slate-800">{dateEcheance || "—"}</span>
+                  <span className="font-medium text-slate-800">{formatDate(facture.date_echeance)}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          <table className="w-full mb-8 text-sm border border-gray-200 border-collapse">
-            <thead>
-              <tr className="bg-slate-900 text-white">
-                <th className="px-4 py-3 text-left font-semibold">Désignation</th>
-                <th className="px-4 py-3 text-center font-semibold">Qté</th>
-                <th className="px-4 py-3 text-right font-semibold">Prix unit.</th>
-                <th className="px-4 py-3 text-right font-semibold">Montant HT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lignes.length === 0 ? (
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Lignes</p>
+            <table className="w-full text-sm border border-slate-100 rounded-xl overflow-hidden">
+              <thead className="bg-slate-900 text-white">
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400 italic">
-                    Aucune ligne
-                  </td>
+                  <th className="px-4 py-2.5 text-left font-semibold">Désignation</th>
+                  <th className="px-4 py-2.5 text-center font-semibold">Qté</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Prix unit.</th>
+                  <th className="px-4 py-2.5 text-right font-semibold">Montant HT</th>
                 </tr>
-              ) : (
-                lignes.map((l, i) => (
-                  <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
-                    <td className="px-4 py-3 text-slate-800">{l.designation}</td>
-                    <td className="px-4 py-3 text-center text-slate-600">{l.quantite}</td>
-                    <td className="px-4 py-3 text-right text-slate-600">{formatCurrency(l.prix_unitaire)}</td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-900">{formatCurrency(l.montant_ligne)}</td>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {facture.lignes.map((l, i) => (
+                  <tr key={l.id} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                    <td className="px-4 py-2.5 text-slate-800">{l.designation}</td>
+                    <td className="px-4 py-2.5 text-center text-slate-600">{l.quantite}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-600">{formatCurrency(l.prix_unitaire)}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-slate-900">{formatCurrency(l.montant_ligne)}</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
           <div className="flex justify-end">
             <div className="w-72 space-y-2">
               {[
-                { label: "Total Net HTVA", val: totaux.total_ht },
-                { label: "Total TVA (19%)", val: totaux.tva },
-                { label: "Timbre Fiscal", val: totaux.timbre_fiscal },
+                { label: "Total HT",      val: facture.total_ht },
+                { label: "TVA (19%)",     val: facture.tva },
+                { label: "Timbre Fiscal", val: facture.timbre_fiscal },
               ].map(({ label, val }) => (
                 <div key={label} className="flex justify-between text-sm py-1 border-b border-slate-100">
                   <span className="text-slate-500">{label}</span>
                   <span className="font-medium text-slate-800">{formatCurrency(val)}</span>
                 </div>
               ))}
-              <div className="flex justify-between items-center py-3 bg-slate-900 text-white px-4 mt-2">
-                <span className="font-bold">Total TTC</span>
-                <span className="text-xl font-black">{formatCurrency(totaux.total_ttc)}</span>
+              <div className="flex justify-between items-center py-3 bg-slate-900 text-white px-4 mt-2 rounded-xl">
+                <span className="font-bold text-sm">Total TTC</span>
+                <span className="text-lg font-black">{formatCurrency(facture.total_ttc)}</span>
               </div>
             </div>
           </div>
-        </div>
 
-        <div className="sticky bottom-0 bg-white border-t border-slate-100 px-8 py-4 flex justify-end">
-          <button onClick={onClose} className="px-6 py-2.5 bg-slate-900 text-white font-semibold text-sm">
-            Fermer l’aperçu
-          </button>
+          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
+            <button
+              onClick={() => onDownloadPdf(facture.id)}
+              className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold border border-slate-200 text-slate-700 rounded-xl hover:bg-slate-50 transition"
+            >
+              📄 Télécharger PDF
+            </button>
+            {actions.map((a) => (
+              <button
+                key={a.statut}
+                onClick={() => handleStatut(a.statut)}
+                disabled={loadingStatut}
+                className={`px-4 py-2 text-sm font-semibold border rounded-xl transition disabled:opacity-50 ${a.cls}`}
+              >
+                {a.label}
+              </button>
+            ))}
+            <button
+              onClick={onClose}
+              className="ml-auto px-4 py-2 text-sm font-semibold border border-slate-200 text-slate-500 rounded-xl hover:bg-slate-50 transition"
+            >
+              Fermer
+            </button>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-export default function FacturePage() {
-  const [entreprise, setEntreprise] = useState<Entreprise | null>(null);
-  const [clients, setClients] = useState<Client[]>([]);
-  const [produits, setProduits] = useState<Produit[]>([]);
-  const [selectedClientId, setSelectedClientId] = useState<number | "">("");
-  const [selectedEntrepriseId, setSelectedEntrepriseId] = useState<number | "">("");
-  const [lignes, setLignes] = useState<LigneFacture[]>([]);
-  const [dateEcheance, setDateEcheance] = useState<string>(nextMonthStr());
-  const [statut, setStatut] = useState<StatutFacture>("BROUILLON");
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
-  const [factureNo] = useState<string>(
-    `FAC-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9000) + 1000)}`
-  );
+export default function FacturesListPage() {
+  const [factures, setFactures]               = useState<FactureResponse[]>([]);
+  const [clientMap, setClientMap]             = useState<Record<number, Client>>({});
+  const [loading, setLoading]                 = useState(true);
+  const [selectedFacture, setSelectedFacture] = useState<FactureResponse | null>(null);
+  const [filterStatut, setFilterStatut]       = useState<StatutFacture | "TOUS">("TOUS");
+  const [page, setPage]                       = useState(1);
+  const [toast, setToast]                     = useState<{ msg: string; type: "success" | "error" } | null>(null);
+  const PAGE_SIZE = 10;
 
-  const selectedClient = useMemo(
-    () => clients.find((c) => c.id === Number(selectedClientId)) ?? null,
-    [clients, selectedClientId]
-  );
+  const showToast = (msg: string, type: "success" | "error") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
-  const selectedEntreprise = useMemo(() => entreprise, [entreprise]);
-  const totaux = useMemo(() => calcTotaux(lignes), [lignes]);
+  const fetchAll = async () => {
+    setLoading(true);
+    try {
+      const [facturesRes, clientsRes] = await Promise.all([
+        api.get("/factures/"),
+        api.get("/clients/"),
+      ]);
 
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        try {
-          const clientsRes = await api.get("/clients/");
-          setClients(toArray<Client>(clientsRes.data));
-        } catch (error) {
-          console.error("Erreur clients:", error);
-          setClients([]);
-        }
+      // ✅ FIX PRINCIPAL : log pour voir la vraie structure et extraction correcte
+      console.log("📦 Factures API response:", facturesRes.data);
+      console.log("👥 Clients API response:", clientsRes.data);
 
-        try {
-          const produitsRes = await api.get("/products/");
-          setProduits(toArray<Produit>(produitsRes.data));
-        } catch (error) {
-          console.error("Erreur produits:", error);
-          setProduits([]);
-        }
+      const facturesList: FactureResponse[] = extractArray(facturesRes.data, ["factures"]);
+      const clientsList: Client[]           = extractArray(clientsRes.data, ["clients"]);
 
-        try {
-          const entrepriseRes = await api.get("/entreprises/mon-profil");
-          setEntreprise(entrepriseRes.data ?? null);
-          setSelectedEntrepriseId(entrepriseRes.data?.id ?? "");
-        } catch (error) {
-          console.error("Erreur entreprise:", error);
-          setEntreprise(null);
-          setSelectedEntrepriseId("");
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
+      console.log(`✅ ${facturesList.length} factures extraites`);
+      console.log(`✅ ${clientsList.length} clients extraits`);
 
-    loadData();
-  }, []);
+      // ✅ Vérifie les statuts réels reçus
+      const statuts = [...new Set(facturesList.map(f => f.statut))];
+      console.log("📊 Statuts présents dans les factures:", statuts);
 
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(null), 3500);
-      return () => clearTimeout(t);
+      const map: Record<number, Client> = {};
+      clientsList.forEach((c) => { map[c.id] = c; });
+
+      setFactures(facturesList);
+      setClientMap(map);
+    } catch (err) {
+      console.error("❌ Erreur fetchAll:", err);
+      showToast("Erreur lors du chargement des factures.", "error");
+    } finally {
+      setLoading(false);
     }
-  }, [toast]);
+  };
 
-  const addLigne = useCallback(() => {
-    setLignes((prev) => [
-      ...prev,
-      { product_id: 0, designation: "", quantite: 1, prix_unitaire: 0, montant_ligne: 0 },
-    ]);
-  }, []);
+  useEffect(() => { fetchAll(); }, []);
 
-  const removeLigne = useCallback((idx: number) => {
-    setLignes((prev) => prev.filter((_, i) => i !== idx));
-  }, []);
-
-  const updateLigneProduit = useCallback(
-    (idx: number, produit_id: number) => {
-    const produit = produits.find((p) => p.id=== produit_id);
-      if (!produit) return;
-
-      setLignes((prev) =>
-        prev.map((l, i) =>
-          i === idx
-            ? {
-                ...l,
-                product_id: produit.id,
-                designation: produit.designation,
-                prix_unitaire: produit.prix_unitaire,
-                montant_ligne: Math.round(l.quantite * produit.prix_unitaire * 1000) / 1000,
-              }
-            : l
-        )
+  const handleChangeStatut = async (id: number, statut: StatutFacture) => {
+    try {
+      await factureService.updateStatut(id, statut);
+      showToast("Statut mis à jour.", "success");
+      await fetchAll();
+      setSelectedFacture((prev) =>
+        prev?.id === id ? { ...prev, statut } : prev
       );
-    },
-    [produits]
+    } catch (err: any) {
+      showToast(err.response?.data?.detail || "Erreur lors du changement de statut.", "error");
+    }
+  };
+
+  const handleDownloadPdf = async (id: number) => {
+    try {
+      const blob = await factureService.generatePdf(id);
+      const url  = window.URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      a.download = `facture_${id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch {
+      showToast("Erreur lors du téléchargement du PDF.", "error");
+    }
+  };
+
+  const filtered = useMemo(() =>
+    filterStatut === "TOUS"
+      ? factures
+      : factures.filter((f) => f.statut === filterStatut),
+    [factures, filterStatut]
   );
 
-  const updateLigneQuantite = useCallback((idx: number, val: number) => {
-    setLignes((prev) =>
-      prev.map((l, i) =>
-        i === idx ? { ...l, quantite: val, montant_ligne: Math.round(val * l.prix_unitaire * 1000) / 1000 } : l
-      )
-    );
-  }, []);
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
 
-  const updateLignePrix = useCallback((idx: number, val: number) => {
-    setLignes((prev) =>
-      prev.map((l, i) =>
-        i === idx ? { ...l, prix_unitaire: val, montant_ligne: Math.round(l.quantite * val * 1000) / 1000 } : l
-      )
-    );
-  }, []);
-
-  const validate = () => {
-    if (!selectedClientId) {
-      setToast({ msg: "Veuillez sélectionner un client.", type: "error" });
-      return false;
-    }
-    if (!selectedEntreprise) {
-      setToast({ msg: "Veuillez charger une entreprise.", type: "error" });
-      return false;
-    }
-    if (lignes.length === 0) {
-      setToast({ msg: "Ajoutez au moins une ligne.", type: "error" });
-      return false;
-    }
-    if (lignes.some((l) => !l.product_id)) {
-      setToast({ msg: "Chaque ligne doit avoir un produit.", type: "error" });
-      return false;
-    }
-    return true;
-  };
-
-  const handleCreate = async () => {
-    if (!validate()) return;
-    setLoading(true);
-    try {
-      const payload = {
-        client_id: Number(selectedClientId),
-        entreprise_id: Number(selectedEntrepriseId),
-        date_echeance: dateEcheance || null,
-        lignes: lignes.map((l) => ({
-          product_id: l.product_id,
-          quantite: l.quantite,
-          prix_unitaire: l.prix_unitaire,
-        })),
-      };
-
-      await factureService.create(payload);
-      setToast({ msg: "Facture créée avec succès !", type: "success" });
-      setTimeout(() => {
-        window.location.href = "/factures";
-      }, 1200);
-    } catch (error) {
-      console.error(error);
-      setToast({ msg: "Erreur lors de la création.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSendEmail = async () => {
-    if (!validate()) return;
-    if (!selectedClient?.email) {
-      setToast({ msg: "Ce client n'a pas d'e-mail.", type: "error" });
-      return;
-    }
-    setLoading(true);
-    try {
-      setToast({ msg: `Facture prête à être envoyée à ${selectedClient.email}`, type: "success" });
-    } catch (error) {
-      setToast({ msg: "Erreur lors de l'envoi.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const stats = useMemo(() => ({
+    total:     factures.length,
+    brouillon: factures.filter((f) => f.statut === "BROUILLON").length,
+    envoyee:   factures.filter((f) => f.statut === "ENVOYEE").length,
+    payee:     factures.filter((f) => f.statut === "PAYEE").length,
+    annulee:   factures.filter((f) => f.statut === "ANNULEE").length,
+    ca:        factures.filter((f) => f.statut === "PAYEE")
+                       .reduce((s, f) => s + f.total_ttc, 0),
+  }), [factures]);
 
   return (
     <div className="min-h-screen bg-slate-50 font-[system-ui]">
       {toast && (
-        <div
-          className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl text-sm font-medium transition-all duration-300 ${
-            toast.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
-          }`}
-        >
-          {toast.type === "success" ? <IconCheck /> : "✕"}
-          {toast.msg}
+        <div className={`fixed top-4 right-4 z-50 flex items-center gap-3 px-5 py-3.5 rounded-2xl shadow-xl text-sm font-medium transition-all ${
+          toast.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
+        }`}>
+          {toast.type === "success" ? "✓" : "✕"} {toast.msg}
         </div>
       )}
 
-      <PreviewModal
-        open={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        entreprise={selectedEntreprise}
-        client={selectedClient}
-        lignes={lignes}
-        totaux={totaux}
-        dateEcheance={dateEcheance}
-        factureNo={factureNo}
-        statut={statut}
-      />
+      <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">Factures</h1>
+            <p className="text-slate-400 text-sm mt-1">Gérez et suivez toutes vos factures</p>
+          </div>
+          <button
+            onClick={() => window.location.href = "/factures/nouvelle"}
+            className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-700 transition shadow-md"
+          >
+            + Nouvelle facture
+          </button>
+        </div>
 
-      <div className="max-w-5xl mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          {[
+            { label: "Total",      val: stats.total,     color: "text-slate-900" },
+            { label: "Brouillons", val: stats.brouillon, color: "text-amber-600" },
+            { label: "Envoyées",   val: stats.envoyee,   color: "text-blue-600" },
+            { label: "Payées",     val: stats.payee,     color: "text-emerald-600" },
+            { label: "Annulées",   val: stats.annulee,   color: "text-red-500" },
+          ].map((s) => (
+            <div key={s.label} className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+              <p className={`text-2xl font-black ${s.color}`}>{s.val}</p>
+              <p className="text-xs font-medium text-slate-400 mt-1">{s.label}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="bg-emerald-50 border border-emerald-200 rounded-2xl px-6 py-4 flex items-center justify-between">
+          <p className="text-sm font-semibold text-emerald-700">Chiffre d'affaires encaissé</p>
+          <p className="text-2xl font-black text-emerald-700">{formatCurrency(stats.ca)}</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {(["TOUS", "BROUILLON", "ENVOYEE", "PAYEE", "ANNULEE"] as const).map((s) => (
             <button
-              onClick={() => (window.location.href = "/invoices")}
-              className="flex items-center gap-2 text-slate-500 hover:text-slate-900 text-sm font-medium transition-colors"
+              key={s}
+              onClick={() => { setFilterStatut(s); setPage(1); }}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold border transition ${
+                filterStatut === s
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : "bg-white text-slate-500 border-slate-200 hover:border-slate-900 hover:text-slate-900"
+              }`}
             >
-              <IconArrowLeft /> Retour
+              {s === "TOUS" ? "Toutes" : STATUT_MAP[s].label}
             </button>
-            <div className="w-px h-5 bg-slate-300" />
-            <div>
-              <h1 className="text-2xl font-black text-slate-900 tracking-tight">Nouvelle Facture</h1>
-              <p className="text-xs font-mono text-slate-400 mt-0.5">{factureNo}</p>
-            </div>
-          </div>
+          ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                <div className="p-6">
-                  {selectedEntreprise ? (
-                    <div className="flex items-start gap-4">
-                      <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-slate-100 to-slate-200 flex items-center justify-center border border-slate-200 shrink-0 overflow-hidden">
-                        {selectedEntreprise.logo_url ? (
-                          <img
-                            src={selectedEntreprise.logo_url}
-                            alt="Logo entreprise"
-                            className="w-full h-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-[10px] text-slate-400 font-bold">LOGO</span>
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-bold text-slate-900">{selectedEntreprise.nom}</p>
-                        <p className="text-xs text-slate-400 mt-1">{selectedEntreprise.adresse ?? ""}</p>
-                        <p className="text-xs text-slate-400">{selectedEntreprise.telephone ?? ""}</p>
-                        <p className="text-xs text-slate-400 font-mono mt-1">
-                          MF : {selectedEntreprise.matricule_fiscal ?? "—"}
-                        </p>
-                        <p className="text-xs text-slate-400 font-mono">RIB : {selectedEntreprise.rib ?? "—"}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-slate-400">Aucune entreprise trouvée.</p>
-                  )}
-                </div>
-
-                <div className="p-6">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-3">Client</p>
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1">
-                      <select
-                        value={selectedClientId}
-                        onChange={(e) => setSelectedClientId(e.target.value === "" ? "" : Number(e.target.value))}
-                        className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 pr-10 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent transition"
-                      >
-                        <option value="">Sélectionner un client…</option>
-                        {clients.length === 0 ? (
-                          <option value="" disabled>
-                            Aucun client disponible
-                          </option>
-                        ) : (
-                          clients.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {`${c.prenom ?? ""} ${c.nom ?? ""}`.trim() || `Client #${c.id}`}
-                            </option>
-                          ))
-                        )}
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </span>
-                    </div>
-                    <button
-                      title="Nouveau client"
-                      onClick={() => {}}
-                      className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center hover:bg-slate-700 transition shrink-0"
+        {loading ? (
+          <div className="bg-white rounded-2xl border border-slate-200 py-20 text-center text-slate-400">
+            Chargement…
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="bg-white rounded-2xl border-2 border-dashed border-slate-200 py-20 text-center">
+            <p className="text-slate-400 text-sm">Aucune facture trouvée.</p>
+            <button
+              onClick={() => window.location.href = "/factures/nouvelle"}
+              className="mt-4 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-700 transition"
+            >
+              + Créer une facture
+            </button>
+          </div>
+        ) : (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  {["ID", "Client", "Statut", "Total HT", "TVA", "Timbre", "Total TTC", "Création", "Échéance", "Actions"].map((h) => (
+                    <th
+                      key={h}
+                      className={`px-4 py-3.5 text-xs font-bold text-slate-400 uppercase tracking-wider ${
+                        ["Total HT","TVA","Timbre","Total TTC"].includes(h) ? "text-right" :
+                        h === "Actions" ? "text-center" : "text-left"
+                      }`}
                     >
-                      <IconPlus />
-                    </button>
-                  </div>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {paginated.map((f) => {
+                  const client = clientMap[f.client_id] ?? null;
+                  return (
+                    <tr key={f.id} className="hover:bg-slate-50/60 transition">
+                      <td className="px-4 py-3.5 font-mono font-semibold text-blue-600 text-xs">
+                        #{f.id}
+                      </td>
 
-                  {selectedClient && (
-                    <div className="mt-3 bg-slate-50 rounded-xl p-3 text-xs text-slate-500 space-y-0.5">
-                      <p>{`${selectedClient.prenom ?? ""} ${selectedClient.nom ?? ""}`.trim() || `Client #${selectedClient.id}`}</p>
-                      <p>{selectedClient.email ?? ""}</p>
-                      <p>{selectedClient.adresse ?? ""}</p>
-                      {selectedClient.matricule_fiscal && <p>MF : {selectedClient.matricule_fiscal}</p>}
-                    </div>
-                  )}
+                      {/* ✅ Client : nom + email */}
+                      <td className="px-4 py-3.5">
+                        {client ? (
+                          <div>
+                            <p className="font-semibold text-slate-800 text-xs">
+                              {`${client.prenom ?? ""} ${client.nom ?? ""}`.trim()}
+                            </p>
+                            <p className="text-blue-500 text-xs">{client.email ?? "—"}</p>
+                          </div>
+                        ) : (
+                          <span className="text-slate-400 italic text-xs">Client #{f.client_id}</span>
+                        )}
+                      </td>
+
+                      {/* ✅ Statut réel depuis la BDD — pas de valeur par défaut */}
+                      <td className="px-4 py-3.5">
+                        <StatusBadge statut={f.statut} />
+                      </td>
+
+                      <td className="px-4 py-3.5 text-right text-slate-700 font-medium tabular-nums text-xs">
+                        {formatCurrency(f.total_ht)}
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-slate-500 tabular-nums text-xs">
+                        {formatCurrency(f.tva)}
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-slate-500 tabular-nums text-xs">
+                        {formatCurrency(f.timbre_fiscal)}
+                      </td>
+                      <td className="px-4 py-3.5 text-right font-bold text-slate-900 tabular-nums text-xs">
+                        {formatCurrency(f.total_ttc)}
+                      </td>
+
+                      <td className="px-4 py-3.5 text-slate-400 text-xs">
+                        {formatDate(f.date_creation)}
+                      </td>
+                      <td className="px-4 py-3.5 text-xs">
+                        {f.date_echeance ? (
+                          <span className={
+                            new Date(f.date_echeance) < new Date() && f.statut !== "PAYEE"
+                              ? "text-red-500 font-semibold"
+                              : "text-slate-400"
+                          }>
+                            {formatDate(f.date_echeance)}
+                          </span>
+                        ) : "—"}
+                      </td>
+
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <button
+                            onClick={() => setSelectedFacture(f)}
+                            className="px-3 py-1.5 text-xs font-semibold border border-slate-200 text-slate-600 rounded-lg hover:border-slate-900 hover:text-slate-900 transition"
+                          >
+                            Voir
+                          </button>
+                          <button
+                            onClick={() => handleDownloadPdf(f.id)}
+                            className="px-3 py-1.5 text-xs font-semibold border border-blue-200 text-blue-600 rounded-lg hover:bg-blue-50 transition"
+                          >
+                            PDF
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
+                <span className="text-xs text-slate-400">{filtered.length} facture(s)</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition text-xs font-bold"
+                  >
+                    ‹
+                  </button>
+                  <span className="text-xs text-slate-600 font-medium">
+                    Page {page} / {totalPages}
+                  </span>
+                  <button
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="w-8 h-8 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 transition text-xs font-bold"
+                  >
+                    ›
+                  </button>
                 </div>
               </div>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs font-bold text-slate-400 uppercase tracking-widest block mb-2">
-                    Date d'échéance
-                  </label>
-                  <input
-                    type="date"
-                    value={dateEcheance}
-                    onChange={(e) => setDateEcheance(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
-                  />
-                </div>
-                
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="px-6 pt-5 pb-3 flex items-center justify-between border-b border-slate-100">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Lignes de facture</p>
-                <button
-                  onClick={addLigne}
-                  className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-semibold hover:bg-slate-700 transition"
-                >
-                  <IconPlus /> Ajouter une ligne
-                </button>
-              </div>
-
-              <div className="grid grid-cols-12 gap-2 px-6 py-2.5 bg-slate-50 text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100">
-                <div className="col-span-5">Désignation</div>
-                <div className="col-span-2 text-center">Quantité</div>
-                <div className="col-span-3 text-right">Prix unit. (DT)</div>
-                <div className="col-span-1 text-right">Montant</div>
-                <div className="col-span-1" />
-              </div>
-
-              <div className="divide-y divide-slate-50">
-                {lignes.length === 0 ? (
-                  <div className="px-6 py-10 text-center">
-                    <p className="text-slate-400 text-sm">Aucune ligne — cliquez sur « Ajouter »</p>
-                  </div>
-                ) : (
-                  lignes.map((ligne, idx) => (
-                    <div key={idx} className="grid grid-cols-12 gap-2 px-6 py-3 items-center hover:bg-slate-50/60 transition-colors">
-                      <div className="col-span-5">
-                        <select
-                          value={ligne.product_id || ""}
-                          onChange={(e) => updateLigneProduit(idx, Number(e.target.value))}
-                          className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
-                        >
-                          <option value="">Choisir un produit…</option>
-                          {produits.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.designation}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div className="col-span-2">
-                        <input
-                          type="number"
-                          min={1}
-                          value={ligne.quantite}
-                          onChange={(e) => updateLigneQuantite(idx, Math.max(1, Number(e.target.value) || 1))}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-center text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
-                        />
-                      </div>
-
-                      <div className="col-span-3">
-                        <input
-                          type="number"
-                          min={0}
-                          step={0.001}
-                          value={ligne.prix_unitaire}
-                          onChange={(e) => updateLignePrix(idx, Math.max(0, Number(e.target.value) || 0))}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-right text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition"
-                        />
-                      </div>
-
-                      <div className="col-span-1 text-right text-sm font-semibold text-slate-700">
-                        {ligne.montant_ligne.toFixed(3)}
-                      </div>
-
-                      <div className="col-span-1 flex justify-end">
-                        <button
-                          onClick={() => removeLigne(idx)}
-                          className="w-8 h-8 rounded-lg text-red-400 hover:bg-red-50 hover:text-red-600 flex items-center justify-center transition"
-                        >
-                          <IconTrash />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
+            )}
           </div>
-
-          <div className="space-y-4">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4">Récapitulatif</p>
-              <div className="space-y-3">
-                {[
-                  { label: "Total Net HTVA", val: totaux.total_ht },
-                  { label: "Total TVA (19%)", val: totaux.tva },
-                  { label: "Timbre Fiscal", val: totaux.timbre_fiscal },
-                ].map(({ label, val }) => (
-                  <div key={label} className="flex justify-between items-center text-sm border-b border-slate-100 pb-2">
-                    <span className="text-slate-500">{label}</span>
-                    <span className="font-semibold text-slate-800 tabular-nums">{formatCurrency(val)}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between items-center pt-2">
-                  <span className="font-bold text-slate-900">Total TTC</span>
-                  <span className="text-xl font-black text-slate-900 tabular-nums">{formatCurrency(totaux.total_ttc)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-3">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">Actions</p>
-
-              <button
-                onClick={() => setPreviewOpen(true)}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-slate-200 text-slate-700 rounded-xl text-sm font-semibold hover:border-slate-900 hover:text-slate-900 transition"
-              >
-                <IconEye /> Aperçu 
-              </button>
-
-              <button
-                onClick={handleSendEmail}
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-blue-200 text-blue-700 rounded-xl text-sm font-semibold hover:border-blue-600 hover:text-blue-800 transition disabled:opacity-50"
-              >
-                <IconMail /> Envoyer par e-mail
-              </button>
-
-              <button
-                onClick={handleCreate}
-                disabled={loading}
-                className="w-full flex items-center justify-center gap-2 px-4 py-3.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-700 transition disabled:opacity-60 shadow-md shadow-slate-200"
-              >
-                {loading ? "Création…" : (
-                  <>
-                    <IconCheck /> Créer la facture
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
+        )}
       </div>
+
+      {selectedFacture && (
+        <DetailModal
+          facture={selectedFacture}
+          client={clientMap[selectedFacture.client_id] ?? null}
+          onClose={() => setSelectedFacture(null)}
+          onChangeStatut={handleChangeStatut}
+          onDownloadPdf={handleDownloadPdf}
+        />
+      )}
     </div>
   );
 }

@@ -17,7 +17,6 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "../components/ui/dialog";
 
-//  Type client basé sur le backend
 type Client = {
   id: number;
   nom: string;
@@ -28,7 +27,6 @@ type Client = {
   matricule_fiscal: string;
 };
 
-// ✅ État initial du formulaire
 const emptyForm = {
   nom: "",
   prenom: "",
@@ -37,6 +35,7 @@ const emptyForm = {
   adresse: "",
   matricule_fiscal: "",
 };
+
 type ClientListResponse = {
   total: number;
   clients: Client[];
@@ -53,12 +52,10 @@ export function ClientsPage() {
   const [formData, setFormData] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ Chargement initial des clients depuis le backend
   const fetchClients = async () => {
     try {
       setLoading(true);
       const data: ClientListResponse = await getClients();
-      console.log("API RESPONSE:", data);
       setClients(data.clients);
       setError(null);
     } catch (err) {
@@ -73,37 +70,43 @@ export function ClientsPage() {
     fetchClients();
   }, []);
 
-  // ✅ Pré-remplir le formulaire lors de l'édition
- useEffect(() => {
-  if (editingClient) {
-    setFormData({
-      nom: editingClient.nom,
-      prenom: editingClient.prenom,
-      email: editingClient.email,
-      telephone: editingClient.telephone,
-      adresse: editingClient.adresse,
-      matricule_fiscal: editingClient.matricule_fiscal,
-    });
-  } else {
-    setFormData(emptyForm);
-  }
-}, [editingClient]);
+  useEffect(() => {
+    if (editingClient) {
+      setFormData({
+        nom: editingClient.nom,
+        prenom: editingClient.prenom,
+        email: editingClient.email,
+        telephone: editingClient.telephone,
+        adresse: editingClient.adresse,
+        matricule_fiscal: editingClient.matricule_fiscal,
+      });
+    } else {
+      setFormData(emptyForm);
+    }
+  }, [editingClient]);
 
-  // Gestion du changement des champs du formulaire
+  // ✅ FIX : handleChange utilise e.target.name au lieu de e.target.id
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData((prev) => ({ ...prev, [e.target.id]: e.target.value }));
+    const { name, value } = e.target;
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  //  Soumission : création ou mise à jour
   const handleSubmit = async () => {
+    // ✅ Validation basique avant envoi
+    if (!formData.nom.trim() || !formData.email.trim()) {
+      setError("Le nom et l'email sont obligatoires.");
+      return;
+    }
+
     try {
       setSubmitting(true);
+      setError(null);
       if (editingClient) {
         await updateClient(editingClient.id, formData);
       } else {
         await createClient(formData);
       }
-      await fetchClients();// Rafraîchir la liste
+      await fetchClients();
       closeDialog();
     } catch (err) {
       setError("Erreur lors de la sauvegarde du client.");
@@ -112,7 +115,6 @@ export function ClientsPage() {
     }
   };
 
-  // ✅ Suppression d'un client
   const handleDelete = async (id: number) => {
     if (!window.confirm("Supprimer ce client ?")) return;
     try {
@@ -127,14 +129,14 @@ export function ClientsPage() {
     setIsAddDialogOpen(false);
     setEditingClient(null);
     setFormData(emptyForm);
+    setError(null);
   };
 
-  // ✅ Filtrage local par recherche
   const filteredClients = clients.filter((c) =>
-  [c.nom, c.prenom, c.email].some((field) =>
-    field?.toLowerCase().includes(searchQuery.toLowerCase())
-  )
-);
+    [c.nom, c.prenom, c.email].some((field) =>
+      field?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+  );
 
   return (
     <div className="space-y-6">
@@ -149,8 +151,7 @@ export function ClientsPage() {
         </Button>
       </div>
 
-      {/* ✅ Affichage des erreurs */}
-      {error && (
+      {error && !isAddDialogOpen && editingClient === null && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
           {error}
         </div>
@@ -173,7 +174,6 @@ export function ClientsPage() {
           </div>
         </CardHeader>
         <CardContent>
-          {/* ✅ État de chargement */}
           {loading ? (
             <div className="text-center py-10 text-gray-400">Chargement...</div>
           ) : filteredClients.length === 0 ? (
@@ -183,7 +183,7 @@ export function ClientsPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Nom</TableHead>
-                  <TableHead>Prenom</TableHead>
+                  <TableHead>Prénom</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Téléphone</TableHead>
                   <TableHead>Adresse</TableHead>
@@ -249,55 +249,104 @@ export function ClientsPage() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
-              {editingClient ? "Edit Client / Modifier Client" : "Add New Client / Ajouter Client"}
+              {editingClient ? "Modifier Client" : "Ajouter Client"}
             </DialogTitle>
           </DialogHeader>
+
+          {/* ✅ Erreur visible dans le dialog */}
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded text-sm">
+              {error}
+            </div>
+          )}
 
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name / Nom complet *</Label>
-                <Input id="name" placeholder="e.g., Mohamed Ben Salah"
-                  value={formData.nom} onChange={handleChange} />
+                {/* ✅ FIX : name="nom" correspond à la clé formData */}
+                <Label htmlFor="nom">Nom *</Label>
+                <Input
+                  id="nom"
+                  name="nom"
+                  placeholder="ex: Ben Salah"
+                  value={formData.nom}
+                  onChange={handleChange}
+                />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="company">Company / Entreprise *</Label>
-                <Input id="company" placeholder="e.g., STEG Tunisie"
-                  value={formData.prenom} onChange={handleChange} />
+                {/* ✅ FIX : name="prenom" correspond à la clé formData */}
+                <Label htmlFor="prenom">Prénom *</Label>
+                <Input
+                  id="prenom"
+                  name="prenom"
+                  placeholder="ex: Mohamed"
+                  value={formData.prenom}
+                  onChange={handleChange}
+                />
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
+                {/* ✅ FIX : name="email" */}
                 <Label htmlFor="email">Email *</Label>
-                <Input id="email" type="email" placeholder="contact@company.tn"
-                  value={formData.email} onChange={handleChange} />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="contact@company.tn"
+                  value={formData.email}
+                  onChange={handleChange}
+                />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="phone">Téléphone *</Label>
-                <Input id="phone" type="tel" placeholder="+216 71 XXX XXX"
-                  value={formData.telephone} onChange={handleChange} />
+                {/* ✅ FIX : name="telephone" */}
+                <Label htmlFor="telephone">Téléphone *</Label>
+                <Input
+                  id="telephone"
+                  name="telephone"
+                  type="tel"
+                  placeholder="+216 71 XXX XXX"
+                  value={formData.telephone}
+                  onChange={handleChange}
+                />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="address">Adresse</Label>
-              <Input id="address" placeholder="e.g., Avenue Habib Bourguiba, Tunis"
-                value={formData.adresse} onChange={handleChange} />
+              {/* ✅ FIX : name="adresse" */}
+              <Label htmlFor="adresse">Adresse</Label>
+              <Input
+                id="adresse"
+                name="adresse"
+                placeholder="ex: Avenue Habib Bourguiba, Tunis"
+                value={formData.adresse}
+                onChange={handleChange}
+              />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="taxId">Tax ID / Matricule Fiscale</Label>
-              <Input id="taxId" placeholder="e.g., 0123456A"
-                value={formData.matricule_fiscal} onChange={handleChange} />
+              {/* ✅ FIX : name="matricule_fiscal" */}
+              <Label htmlFor="matricule_fiscal">Matricule Fiscale</Label>
+              <Input
+                id="matricule_fiscal"
+                name="matricule_fiscal"
+                placeholder="ex: 0123456A"
+                value={formData.matricule_fiscal}
+                onChange={handleChange}
+              />
             </div>
 
             <div className="flex items-center justify-end gap-3 pt-4 border-t">
               <Button variant="outline" onClick={closeDialog} disabled={submitting}>
-                Cancel
+                Annuler
               </Button>
               <Button onClick={handleSubmit} disabled={submitting}>
-                {submitting ? "Saving..." : editingClient ? "Update Client" : "Add Client"}
+                {submitting
+                  ? "Sauvegarde..."
+                  : editingClient
+                  ? "Mettre à jour"
+                  : "Ajouter"}
               </Button>
             </div>
           </div>

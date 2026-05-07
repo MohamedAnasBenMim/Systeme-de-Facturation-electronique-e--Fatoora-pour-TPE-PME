@@ -20,6 +20,7 @@ import {
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Users, label: "Clients", path: "/clients" },
+  { icon: Users, label: "Fournisseurs", path: "/fournisseurs" },
   { icon: Wallet, label: "Expenses / Dépenses", path: "/expenses" },
   { icon: Package, label: "Produits & Services", path: "/products" },
   { icon: BarChart3, label: "Reports / Rapports", path: "/reports" },
@@ -28,11 +29,13 @@ const menuItems = [
 const ventesItems = [
   { icon: FileText, label: "Factures", path: "/invoices" },
   { icon: FileEdit, label: "Devis", path: "/quotes" },
+  { icon: FileText, label: "Bon de commande", path: "/bon-commande" },
+  { icon: FileText, label: "Bon de livraison", path: "/bon-livraison" },
 ];
 
 const AchatsItems = [
-  { icon: FileText, label: "Factures", path: "/invoices" },
-  { icon: FileEdit, label: "Devis", path: "/quotes" },
+  { icon: FileText, label: "Factures fournisseur", path: "/factures-fournisseur" },
+  { icon: FileEdit, label: "Bons de commande", path: "/bons-commande" },
 ];
 
 const profileEntrepriseItems = [

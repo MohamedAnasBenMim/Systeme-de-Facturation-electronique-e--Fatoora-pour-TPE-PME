@@ -17,7 +17,6 @@ export function Navbar() {
   useEffect(() => {
     const chargerUtilisateur = async () => {
       try {
-        // ✅ axios à la place de fetch — token ajouté automatiquement
         const response = await api.get("/users/me");
         setUtilisateur(response.data);
       } catch (error) {

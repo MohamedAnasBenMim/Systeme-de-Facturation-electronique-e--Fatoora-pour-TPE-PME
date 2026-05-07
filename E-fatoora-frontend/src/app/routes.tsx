@@ -1,7 +1,7 @@
 import { createBrowserRouter, Navigate } from "react-router";
 import { Layout } from "./components/Layout";
 import { DashboardPage } from "./pages/DashboardPage";
-import { InvoicesPage } from "./pages/InvoicesPage";
+import InvoicesPage from "./pages/InvoicesPage";
 import { ClientsPage } from "./pages/ClientsPage";
 import { QuotesPage } from "./pages/QuotesPage";
 import { ExpensesPage } from "./pages/ExpensesPage";
@@ -15,6 +15,12 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import CompteBancairePage from "./pages/CompteBancairePage";
 import { SSOCallback } from "./pages/SSOCallback";
 import TvaPage from "./pages/TvaPage";
+import { BonCommandePage }  from "./pages/BonCommandePage";
+import  {BonLivraisonPage}  from "./pages/BonLivraisonPage";
+import { FacturesFournisseurPage } from "./pages/FacturesFournisseurPage";
+import { BonsCommandePage } from "./pages/BonsCommandePage";
+import { FournisseursPage } from "./pages/FournisseursPage";
+
 
 export const router = createBrowserRouter([
   // Page d’accueil (non protégée)
@@ -55,6 +61,11 @@ export const router = createBrowserRouter([
       { path: "settings", Component: SettingsPage },
       { path: "compte", Component: CompteBancairePage },
       { path: "parametres", Component: TvaPage },
+      { path: "bon-commande", Component: BonCommandePage },
+      { path: "bon-livraison", Component: BonLivraisonPage },
+      { path: "factures-fournisseur", Component: FacturesFournisseurPage },
+      { path: "bons-commande", Component: BonsCommandePage },
+      { path: "fournisseurs", Component: FournisseursPage },
     ],
   },
 

@@ -68,6 +68,14 @@ class FactureService {
   return response.data || response;
  }
 
+  async updateStatut(
+    id: number,
+    statut: "BROUILLON" | "VALIDEE" | "PAYEE" | "ANNULEE"
+  ): Promise<Facture> {
+    const response = await api.put(`${this.basePath}/${id}`, { statut });
+    return response.data || response;
+  }
+
 
   // ─── DELETE ───
   async delete(id: number): Promise<any> {
@@ -76,9 +84,12 @@ class FactureService {
   }
 
   // ─── PDF ───
-  async genererPdf(id: number): Promise<any> {
-    const response = await api.post(`${this.basePath}/${id}/pdf`);
-    return response.data || response;
+    async genererPdf(id: number): Promise<Blob> {
+    const response = await api.get(`${this.basePath}/${id}/pdf/download`, {
+      responseType: 'blob',
+      headers: { Accept: 'application/pdf' }
+    });
+    return response.data;
   }
 
   async downloadPdf(id: number): Promise<Blob> {
