@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Bon de Livraison {{ bl.numero }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+        .client-info { margin-bottom: 20px; }
+        .table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .table th, .table td { border: 1px solid #000; padding: 8px; text-align: left; }
+        .table th { background-color: #f0f0f0; }
+        .total { text-align: right; margin-top: 20px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>BON DE LIVRAISON</h1>
+        <h2>{{ bl.numero }}</h2>
+    </div>
+
+    <div class="client-info">
+        <p><strong>Client ID:</strong> {{ bl.client_id }}</p>
+        {% if client %}
+        <p><strong>Nom:</strong> {{ client.nom }}</p>
+        <p><strong>Adresse:</strong> {{ client.adresse }}</p>
+        {% endif %}
+        <p><strong>Date de création:</strong> {{ bl.date_creation.strftime('%d/%m/%Y') }}</p>
+        <p><strong>Statut:</strong> {{ bl.statut.value }}</p>
+        {% if bl.date_livraison %}
+        <p><strong>Date de livraison:</strong> {{ bl.date_livraison.strftime('%d/%m/%Y') }}</p>
+        {% endif %}
+    </div>
+
+    <table class="table">
+        <thead>
+            <tr>
+                <th>Description</th>
+                <th>Quantité</th>
+                <th>Prix Unitaire</th>
+                <th>Montant HT</th>
+                <th>TVA (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ligne in bl.lignes %}
+            <tr>
+                <td>{{ ligne.description or 'Produit ' + ligne.product_id|string }}</td>
+                <td>{{ ligne.quantite }}</td>
+                <td>{{ "%.2f"|format(ligne.prix_unitaire) }} €</td>
+                <td>{{ "%.2f"|format(ligne.montant_ht) }} €</td>
+                <td>{{ ligne.montant_tva }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="total">
+        <p>Montant HT: {{ "%.2f"|format(bl.montant_ht) }} €</p>
+        <p>Montant TVA: {{ "%.2f"|format(bl.montant_tva) }} €</p>
+        <p><strong>Montant TTC: {{ "%.2f"|format(bl.montant_ttc) }} €</strong></p>
+    </div>
+
+    {% if bl.notes %}
+    <div>
+        <h3>Notes:</h3>
+        <p>{{ bl.notes }}</p>
+    </div>
+    {% endif %}
+</body>
+</html>
