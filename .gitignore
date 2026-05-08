@@ -11,6 +11,9 @@ __pycache__/
 *.db
 *.sqlite3
 .DS_Store
+<<<<<<< HEAD
+Thumbs.db
+=======
 Thumbs.db
 
 # React 
@@ -46,3 +49,4 @@ frontend/.vite/
 *.sln
 *.sw?
  
+>>>>>>> e-fatoora/backend-frontend
