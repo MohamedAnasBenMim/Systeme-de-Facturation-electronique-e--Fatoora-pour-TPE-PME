@@ -5,6 +5,17 @@ import httpx
 
 router = APIRouter(prefix="/entreprises", tags=["Entreprises"])
 
+LOCAL_ENTREPRISE = {
+    "id": 1,
+    "nom": "Be CarthAI Consulting",
+    "adresse": "Tunis",
+    "telephone": "+216 29 444 317",
+    "email": "contact@becarthai.tn",
+    "matricule_fiscal": "1234567/A/M/000",
+    "rib": "",
+    "logo_url": None,
+}
+
 
 def _headers(request: Request) -> dict:
     token = request.headers.get("Authorization", "")
@@ -26,32 +37,41 @@ def _proxy_response(resp: httpx.Response):
 
 @router.get("/")
 async def get_all(request: Request):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil/complet",
-            headers=_headers(request),
-        )
-    return _proxy_response(response)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil/complet",
+                headers=_headers(request),
+            )
+        return _proxy_response(response)
+    except httpx.RequestError:
+        return LOCAL_ENTREPRISE
 
 
 @router.get("/mon-profil")
 async def get_mon_profil(request: Request):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil",
-            headers=_headers(request),
-        )
-    return _proxy_response(response)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil",
+                headers=_headers(request),
+            )
+        return _proxy_response(response)
+    except httpx.RequestError:
+        return LOCAL_ENTREPRISE
 
 
 @router.get("/mon-profil/complet")
 async def get_mon_profil_complet(request: Request):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil/complet",
-            headers=_headers(request),
-        )
-    return _proxy_response(response)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/mon-profil/complet",
+                headers=_headers(request),
+            )
+        return _proxy_response(response)
+    except httpx.RequestError:
+        return LOCAL_ENTREPRISE
 
 # TAXES
 # gateway/entreprise_router.py — mets à jour toutes les URLs
@@ -184,22 +204,28 @@ async def delete_cachet(request: Request):
 
 @router.get("/{entreprise_id}")
 async def get_by_id(entreprise_id: int, request: Request):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/{entreprise_id}",
-            headers=_headers(request),
-        )
-    return _proxy_response(response)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/{entreprise_id}",
+                headers=_headers(request),
+            )
+        return _proxy_response(response)
+    except httpx.RequestError:
+        return {**LOCAL_ENTREPRISE, "id": entreprise_id}
 
 
 @router.get("/{entreprise_id}/config")
 async def get_config(entreprise_id: int, request: Request):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(
-            f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/{entreprise_id}/config",
-            headers=_headers(request),
-        )
-    return _proxy_response(response)
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{settings.ENTREPRISE_SERVICE_URL}/entreprises/{entreprise_id}/config",
+                headers=_headers(request),
+            )
+        return _proxy_response(response)
+    except httpx.RequestError:
+        return {**LOCAL_ENTREPRISE, "id": entreprise_id}
 
 
 @router.post("/")

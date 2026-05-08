@@ -14,8 +14,12 @@ from app.core.http_client import (
     get_client_by_id,
     get_entreprise_by_id,
     get_produit_by_id,
+    get_stock_produit_by_id,
+    get_stock_disponible,
+    creer_sortie_stock_depuis_facture,
     get_devis_by_id,
 )
+from app.core.config import settings
 from app.services.pdf_service import generer_pdf_facture
 
 
@@ -43,6 +47,70 @@ def _get_or_404(db: Session, facture_id: int) -> Facture:
     return facture
 
 
+async def _get_product_for_invoice(product_id: int, token: str = None) -> dict:
+    stock_product = await get_stock_produit_by_id(product_id, token=token)
+    if stock_product:
+        return {
+            **stock_product,
+            "source_catalogue": "STOCK",
+        }
+
+    produit = await get_produit_by_id(product_id, token=token)
+    return {
+        **produit,
+        "source_catalogue": "E_FATOORA",
+    }
+
+
+async def _verifier_disponibilites_stock(lignes_data: list[dict], token: str = None) -> None:
+    quantites_par_produit: dict[int, float] = {}
+    designations: dict[int, str] = {}
+    for ligne in lignes_data:
+        product_id = int(ligne["product_id"])
+        quantites_par_produit[product_id] = quantites_par_produit.get(product_id, 0.0) + float(ligne["quantite"])
+        designations[product_id] = ligne.get("designation") or f"Produit #{product_id}"
+
+    erreurs = []
+    for product_id, quantite_demandee in quantites_par_produit.items():
+        stock_product = await get_stock_produit_by_id(product_id, token=token)
+        if not stock_product:
+            continue
+
+        disponible = await get_stock_disponible(product_id, token=token)
+        if disponible is None:
+            erreurs.append(f"{designations[product_id]} : stock indisponible")
+            continue
+        if disponible < quantite_demandee:
+            erreurs.append(
+                f"{designations[product_id]} : demandé {quantite_demandee}, disponible {disponible}"
+            )
+
+    if erreurs:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Stock insuffisant pour valider la facture.",
+                "produits": erreurs,
+            },
+        )
+
+
+async def _deduire_stock_facture(facture: Facture, token: str = None) -> None:
+    facture_ref = facture.numero or f"FACTURE-{facture.id}"
+    for ligne in facture.lignes:
+        stock_product = await get_stock_produit_by_id(ligne.product_id, token=token)
+        if not stock_product:
+            continue
+
+        await creer_sortie_stock_depuis_facture(
+            product_id=ligne.product_id,
+            designation=ligne.designation,
+            quantite=ligne.quantite,
+            facture_ref=facture_ref,
+            token=token,
+        )
+
+
 # ── CREATE ─────────────────────────────────────────────────────────────
 
 async def create_facture(db: Session, data: FactureCreate, token: str = None) -> Facture:
@@ -61,7 +129,7 @@ async def create_facture(db: Session, data: FactureCreate, token: str = None) ->
    
     lignes_enrichies = []
     for l in data.lignes:
-        produit = await get_produit_by_id(l.product_id, token=token)
+        produit = await _get_product_for_invoice(l.product_id, token=token)
         designation = (getattr(l, "description", None) or "").strip() or produit.get("designation", f"Produit #{l.product_id}")
         lignes_enrichies.append({
             "product_id":    l.product_id,
@@ -70,6 +138,8 @@ async def create_facture(db: Session, data: FactureCreate, token: str = None) ->
             "prix_unitaire": l.prix_unitaire,
             "montant_ligne": round(l.quantite * l.prix_unitaire, 3),
         })
+
+    await _verifier_disponibilites_stock(lignes_enrichies, token=token)
 
     
     totaux = _calculer_totaux(lignes_enrichies)
@@ -134,13 +204,16 @@ async def update_facture(
 
     facture = _get_or_404(db, facture_id)
 
-    if facture.statut != StatutFacture.BROUILLON:
+    ancien_statut = facture.statut
+
+    if facture.statut != StatutFacture.BROUILLON and data.statut != StatutFacture.PAYEE:
         raise HTTPException(
             status_code=400,
-            detail="Seules les factures en statut BROUILLON peuvent être modifiées."
+            detail="Seules les factures en statut BROUILLON peuvent être modifiées, sauf passage à PAYEE."
         )
 
     try:
+        lignes_modifiees: list[dict] | None = None
         if data.date_echeance is not None:
             facture.date_echeance = data.date_echeance
         if data.statut is not None:
@@ -153,7 +226,7 @@ async def update_facture(
 
             lignes_enrichies = []
             for l in data.lignes:
-                produit = await get_produit_by_id(l.product_id, token=token)
+                produit = await _get_product_for_invoice(l.product_id, token=token)
                 lignes_enrichies.append({
                     "product_id":    l.product_id,
                     "designation":   produit.get("designation", f"Produit #{l.product_id}"),
@@ -171,9 +244,33 @@ async def update_facture(
             facture.tva           = totaux["tva"]
             facture.timbre_fiscal = totaux["timbre_fiscal"]
             facture.total_ttc     = totaux["total_ttc"]
+            lignes_modifiees = lignes_enrichies
+
+        if (
+            data.statut == StatutFacture.VALIDEE
+            and ancien_statut == StatutFacture.BROUILLON
+            and settings.STOCK_DEDUCTION_ON_STATUS == "VALIDEE"
+        ):
+            lignes_a_verifier = lignes_modifiees or [
+                {
+                    "product_id": ligne.product_id,
+                    "designation": ligne.designation,
+                    "quantite": ligne.quantite,
+                }
+                for ligne in facture.lignes
+            ]
+            await _verifier_disponibilites_stock(lignes_a_verifier, token=token)
 
         db.commit()
         db.refresh(facture)
+
+        if (
+            data.statut == StatutFacture.VALIDEE
+            and ancien_statut == StatutFacture.BROUILLON
+            and settings.STOCK_DEDUCTION_ON_STATUS == "VALIDEE"
+        ):
+            await _deduire_stock_facture(facture, token=token)
+
         return facture
 
     except SQLAlchemyError as e:
@@ -225,7 +322,7 @@ async def generer_et_sauvegarder_pdf(db: Session, facture_id: int) -> str:
 
 # CRÉATION DEPUIS UN DEVIS 
 
-async def create_facture_from_devis(db: Session, devis_id: int, numero_facture: str | None = None, devis_data: dict | None = None) -> Facture:
+async def create_facture_from_devis(db: Session, devis_id: int, numero_facture: str | None = None, devis_data: dict | None = None, token: str = None) -> Facture:
     try:
         if devis_data:
             devis = devis_data
@@ -267,7 +364,7 @@ async def create_facture_from_devis(db: Session, devis_id: int, numero_facture: 
             lignes         = lignes,
         )
 
-        return await create_facture(db, data)
+        return await create_facture(db, data, token=token)
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except KeyError as e:
@@ -278,7 +375,7 @@ async def create_facture_from_devis(db: Session, devis_id: int, numero_facture: 
         raise HTTPException(status_code=500, detail=f"Erreur interne facture : {str(e)}")
 
 
-async def create_facture_groupee_from_bls(db: Session, payload: dict) -> Facture:
+async def create_facture_groupee_from_bls(db: Session, payload: dict, token: str = None) -> Facture:
     """
     Crée une facture groupée depuis plusieurs BL.
     Les numéros BL doivent être fournis dans `description` de chaque ligne.
@@ -306,7 +403,7 @@ async def create_facture_groupee_from_bls(db: Session, payload: dict) -> Facture
             source_id=payload.get("source_id"),
             lignes=lignes,
         )
-        return await create_facture(db, data)
+        return await create_facture(db, data, token=token)
     except ValidationError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except KeyError as e:

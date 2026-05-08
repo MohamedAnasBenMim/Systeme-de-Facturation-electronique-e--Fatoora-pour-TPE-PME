@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -17,6 +17,11 @@ router = APIRouter(
     prefix="/factures",
     tags=["Factures"]
 )
+
+
+def _token(request: Request) -> str | None:
+    auth = request.headers.get("Authorization", "")
+    return auth.replace("Bearer ", "") if auth.startswith("Bearer ") else None
 
 # DASHBOARD
 
@@ -108,9 +113,10 @@ def stats_factures_par_projet(
 @router.post("/", response_model=FactureResponse, status_code=201)
 async def create_facture(
     data: FactureCreate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    return await facture_service.create_facture(db, data)
+    return await facture_service.create_facture(db, data, token=_token(request))
 
 
 class FactureFromDevisRequest(BaseModel):
@@ -131,6 +137,7 @@ class FactureGroupeeRequest(BaseModel):
 @router.post("/depuis-devis/{devis_id}", response_model=FactureResponse, status_code=201)
 async def create_from_devis(
     devis_id: int,
+    request: Request,
     data: FactureFromDevisRequest | None = None,
     db: Session = Depends(get_db)
 ):
@@ -139,15 +146,17 @@ async def create_from_devis(
         devis_id,
         data.numero_facture if data else None,
         data.devis_data if data else None,
+        token=_token(request),
     )
 
 
 @router.post("/groupee", response_model=FactureResponse, status_code=201)
 async def create_groupee_from_bls(
     data: FactureGroupeeRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
-    return await facture_service.create_facture_groupee_from_bls(db, data.model_dump())
+    return await facture_service.create_facture_groupee_from_bls(db, data.model_dump(), token=_token(request))
 
 
 @router.get("/", response_model=list[FactureResponse])
@@ -169,9 +178,10 @@ async def get_facture_detail(facture_id: int, db: Session = Depends(get_db)):
 async def update_facture(
     facture_id: int,
     data: FactureUpdate,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    return await facture_service.update_facture(db, facture_id, data)
+    return await facture_service.update_facture(db, facture_id, data, token=_token(request))
 
 
 @router.delete("/{facture_id}")

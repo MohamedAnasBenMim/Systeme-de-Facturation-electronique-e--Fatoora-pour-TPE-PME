@@ -1,8 +1,6 @@
 version: '3.8'
 
 services:
-
-
   db:
     image: postgres:18
     container_name: e-fatoora-db
@@ -11,85 +9,125 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: admin123
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     networks:
       - e-fatoora-network
 
-
+  db-init:
+    image: postgres:18
+    container_name: e-fatoora-db-init
+    depends_on:
+      - db
+    environment:
+      PGPASSWORD: admin123
+    command: >
+      bash -c "
+      until pg_isready -h db -U postgres; do sleep 1; done;
+      for dbname in authdb userdb clientdb produitdb ventesdb facturedb notificationdb achatsdb entreprisedb depensesdb; do
+        psql -h db -U postgres -tc \"SELECT 1 FROM pg_database WHERE datname='$$dbname'\" | grep -q 1 ||
+        createdb -h db -U postgres $$dbname;
+      done
+      "
+    networks:
+      - e-fatoora-network
 
   auth-service:
-    build: ./Auth-service
+    build: ./Backend/Auth-service
     container_name: auth-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
-      - "8001:8001"
+      - "9001:8001"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/authdb
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - INTERNAL_SECRET=dev-internal-secret-change-me
+      - ENCRYPTION_KEY=dev-encryption-key-change-me
+      - CLERK_SECRET_KEY=local-disabled
+      - CLERK_WEBHOOK_SECRET=local-disabled
+      - ALGORITHM=HS256
     depends_on:
       - db
     networks:
       - e-fatoora-network
 
   user-service:
-    build: ./User-service
+    build: ./Backend/User-service
     container_name: user-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]
     ports:
-      - "8002:8002"
+      - "9002:8002"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/userdb
       - AUTH_SERVICE_URL=http://auth-service:8001
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   client-service:
-    build: ./Client-service
+    build: ./Backend/Client-service
     container_name: client-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8003"]
     ports:
-      - "8003:8003"
+      - "9003:8003"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/clientdb
       - AUTH_SERVICE_URL=http://auth-service:8001
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - ALGORITHM=HS256
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   produit-service:
-    build: ./Produit-service
+    build: ./Backend/produit-service
     container_name: produit-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8004"]
     ports:
-      - "8004:8004"
+      - "9004:8004"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/produitdb
       - AUTH_SERVICE_URL=http://auth-service:8001
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - ALGORITHM=HS256
+      - BASE_URL=http://produit-service:8004
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   ventes-service:
-    build: ./Ventes-service
+    build: ./Backend/ventes-service
     container_name: ventes-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8005"]
     ports:
-      - "8005:8005"
+      - "9005:8005"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/ventesdb
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - ALGORITHM=HS256
       - AUTH_SERVICE_URL=http://auth-service:8001
       - CLIENT_SERVICE_URL=http://client-service:8003
       - PRODUIT_SERVICE_URL=http://produit-service:8004
+      - ENTREPRISE_SERVICE_URL=http://entreprise-service:8080
+      - FACTURE_SERVICE_URL=http://facture-service:8006
     depends_on:
       - db
+      - db-init
       - auth-service
       - client-service
       - produit-service
@@ -97,45 +135,61 @@ services:
       - e-fatoora-network
 
   facture-service:
-    build: ./Facture-service
+    build: ./Backend/Facture-service
     container_name: facture-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8006"]
     ports:
-      - "8006:8006"
+      - "9006:8006"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/facturedb
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - ALGORITHM=HS256
       - AUTH_SERVICE_URL=http://auth-service:8001
       - CLIENT_SERVICE_URL=http://client-service:8003
+      - ENTREPRISE_SERVICE_URL=http://entreprise-service:8080
       - PRODUIT_SERVICE_URL=http://produit-service:8004
       - VENTES_SERVICE_URL=http://ventes-service:8005
+      - DEVIS_SERVICE_URL=http://ventes-service:8005
+      - PDF_STORAGE_DIR=/app/pdfs
+      - STOCK_SERVICE_URL=http://service-stock:8003
+      - MOUVEMENT_SERVICE_URL=http://service-mouvement:8004
+      - STOCK_DEFAULT_SOURCE_ID=2
+      - STOCK_DEFAULT_SOURCE_TYPE=DEPOT
+      - INTEGRATION_SERVICE_SECRET=dev-e-fatoora-stock-integration-secret
     depends_on:
       - db
+      - db-init
       - auth-service
       - client-service
     networks:
       - e-fatoora-network
+      - integration-network
 
   notification-service:
-    build: ./Notification-service
+    build: ./Backend/Notification-service
     container_name: notification-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8007"]
     ports:
-      - "8007:8007"
+      - "9007:8007"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/notificationdb
       - AUTH_SERVICE_URL=http://auth-service:8001
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   achats-service:
-    build: ./Achats-service
+    build: ./Backend/Achats-service
     container_name: achats-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8008"]
     ports:
-      - "8008:8008"
+      - "9008:8008"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/achatsdb
       - AUTH_SERVICE_URL=http://auth-service:8001
@@ -144,51 +198,58 @@ services:
       - ENTREPRISE_SERVICE_URL=http://entreprise-service:8080
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   entreprise-service:
-    build: ./Entreprise-service
+    build: ./Backend/Entreprise-service
     container_name: entreprise-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
     ports:
-      - "8080:8080"
+      - "9080:8080"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/entreprisedb
       - AUTH_SERVICE_URL=http://auth-service:8001
     depends_on:
       - db
+      - db-init
       - auth-service
     networks:
       - e-fatoora-network
 
   depenses-service:
-    build: ./Depenses-service
+    build: ./Backend/Depenses-service
     container_name: depenses-service
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8081"]
     ports:
-      - "8081:8081"
+      - "9081:8081"
     environment:
       - DATABASE_URL=postgresql://postgres:admin123@db:5432/depensesdb
       - AUTH_SERVICE_URL=http://auth-service:8001
       - ENTREPRISE_SERVICE_URL=http://entreprise-service:8080
     depends_on:
       - db
+      - db-init
       - auth-service
       - entreprise-service
     networks:
       - e-fatoora-network
 
- 
   api-gateway:
-    build: ./Api-gateway
+    build: ./Backend/Api-gateway
     container_name: api-gateway
     restart: always
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "8000:8000"
+      - "9000:8000"
     environment:
       - AUTH_SERVICE_URL=http://auth-service:8001
+      - SECRET_KEY=dev-secret-key-change-me-please-123456789
+      - ALGORITHM=HS256
       - USER_SERVICE_URL=http://user-service:8002
       - CLIENT_SERVICE_URL=http://client-service:8003
       - PRODUIT_SERVICE_URL=http://produit-service:8004
@@ -198,6 +259,9 @@ services:
       - ACHATS_SERVICE_URL=http://achats-service:8008
       - ENTREPRISE_SERVICE_URL=http://entreprise-service:8080
       - DEPENSES_SERVICE_URL=http://depenses-service:8081
+      - STOCK_SERVICE_URL=http://service-stock:8003
+      - MOUVEMENT_SERVICE_URL=http://service-mouvement:8004
+      - INTEGRATION_SERVICE_SECRET=dev-e-fatoora-stock-integration-secret
       - GATEWAY_PORT=8000
     depends_on:
       - auth-service
@@ -212,7 +276,7 @@ services:
       - depenses-service
     networks:
       - e-fatoora-network
-
+      - integration-network
 
 volumes:
   postgres_data:
@@ -220,3 +284,6 @@ volumes:
 networks:
   e-fatoora-network:
     driver: bridge
+
+  integration-network:
+    external: true

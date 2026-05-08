@@ -72,10 +72,9 @@ class AuthService:
             )
             if r.status_code == 200:
                 entreprise_id = r.json().get("id")
-        except Exception:
-            pass  # pas encore d'entreprise créée
-            print(f"[AUTH] ❌ Erreur appel entreprise-service : {e}")
-
+        except Exception as e:
+            # L'entreprise peut ne pas encore exister en local.
+            print(f"[AUTH] Erreur appel entreprise-service : {e}")
             print(f"[AUTH] Token payload entreprise_id = {entreprise_id}")
 
         payload = {

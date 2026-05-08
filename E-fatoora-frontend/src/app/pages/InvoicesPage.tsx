@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
+import { useSearchParams } from "react-router";
 import {
   Plus, Download, ChevronLeft, ChevronRight,
   FileText, CheckCircle, XCircle, Send, Eye,
@@ -272,6 +273,7 @@ function DetailModal({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function FacturesListPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [factures, setFactures]               = useState<FactureResponse[]>([]);
   const [clientMap, setClientMap]             = useState<Record<number, Client>>({});
   const [loading, setLoading]                 = useState(true);
@@ -309,6 +311,12 @@ export default function FacturesListPage() {
 
   useEffect(() => { fetchAll(); }, []);
 
+  useEffect(() => {
+    if (searchParams.get("new") === "1") {
+      setShowForm(true);
+    }
+  }, [searchParams]);
+
   // ── Create facture from form ───────────────────────────────────────────────
   const handleCreate = async (data: DocumentFormData) => {
     try {
@@ -335,6 +343,7 @@ export default function FacturesListPage() {
       });
       showToast("Facture créée avec succès.", "success");
       setShowForm(false);
+      setSearchParams({});
       fetchAll();
     } catch (e: any) {
       showToast(e.response?.data?.detail || "Erreur lors de la création.", "error");
@@ -405,7 +414,10 @@ export default function FacturesListPage() {
         showEcheance={true}
         labelEcheance="Date d'échéance"
         submitLabel="Créer la facture"
-        onCancel={() => setShowForm(false)}
+        onCancel={() => {
+          setShowForm(false);
+          setSearchParams({});
+        }}
         onSubmit={handleCreate}
       />
     );

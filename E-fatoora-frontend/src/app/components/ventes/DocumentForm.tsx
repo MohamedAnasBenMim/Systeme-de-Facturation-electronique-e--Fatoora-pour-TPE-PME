@@ -27,7 +27,11 @@ interface Produit {
   id: number;
   designation: string;
   prix_unitaire: number;
+  prix_vente?: number;
+  prix_vente_ht?: number;
   taux_tva?: number;
+  stock_disponible?: number;
+  source_catalogue?: "STOCK" | "E_FATOORA";
 }
 
 export interface LigneDocument {
@@ -76,6 +80,9 @@ const toArray = <T,>(payload: any): T[] => {
   if (Array.isArray(payload)) return payload;
   return payload?.items ?? payload?.data ?? payload?.results ?? payload?.clients ?? [];
 };
+
+const normalizePrix = (produit: Produit) =>
+  Number(produit.prix_unitaire ?? produit.prix_vente ?? produit.prix_vente_ht ?? 0);
 
 const calcTotaux = (lignes: LigneDocument[]) => {
   const total_ht  = Math.round(lignes.reduce((s, l) => s + l.montant_ht, 0) * 1000) / 1000;
@@ -283,18 +290,45 @@ export function DocumentForm({
   );
   const totaux = useMemo(() => calcTotaux(lignes), [lignes]);
 
-  // Chargement des données (clients, produits, entreprise)
+  // Chargement des données (clients, produits stock, entreprise)
   useEffect(() => {
     const load = async () => {
       setDataLoading(true);
       try {
-        const [clientsRes, produitsRes, entrepriseRes] = await Promise.allSettled([
+        const [clientsRes, stockProduitsRes, stockLevelsRes, produitsRes, entrepriseRes] = await Promise.allSettled([
           api.get("/clients/"),
+          api.get("/stock/produits"),
+          api.get("/stock/stocks"),
           api.get("/produits/"),
           api.get("/entreprises/mon-profil"),
         ]);
         if (clientsRes.status === "fulfilled") setClients(toArray<Client>(clientsRes.value.data));
-        if (produitsRes.status === "fulfilled") setProduits(toArray<Produit>(produitsRes.value.data));
+        const stockProducts = stockProduitsRes.status === "fulfilled"
+          ? toArray<Produit>(stockProduitsRes.value.data)
+          : [];
+        const stockLevels = stockLevelsRes.status === "fulfilled"
+          ? toArray<any>(stockLevelsRes.value.data)
+          : [];
+
+        if (stockProducts.length > 0) {
+          const quantites = stockLevels.reduce<Record<number, number>>((acc, stock) => {
+            const productId = Number(stock.produit_id);
+            acc[productId] = (acc[productId] ?? 0) + Number(stock.quantite ?? 0);
+            return acc;
+          }, {});
+          setProduits(stockProducts.map((p) => ({
+            ...p,
+            prix_unitaire: normalizePrix(p),
+            stock_disponible: quantites[Number(p.id)] ?? 0,
+            source_catalogue: "STOCK",
+          })));
+        } else if (produitsRes.status === "fulfilled") {
+          setProduits(toArray<Produit>(produitsRes.value.data).map((p) => ({
+            ...p,
+            prix_unitaire: normalizePrix(p),
+            source_catalogue: "E_FATOORA",
+          })));
+        }
         if (entrepriseRes.status === "fulfilled") setEntreprise(entrepriseRes.value.data ?? null);
       } finally { setDataLoading(false); }
     };
@@ -321,9 +355,9 @@ export function DocumentForm({
       ...l,
       product_id: p.id,
       designation: p.designation,
-      prix_unitaire: p.prix_unitaire,
+      prix_unitaire: normalizePrix(p),
       taux_tva: p.taux_tva ?? 19,
-      montant_ht: Math.round(l.quantite * p.prix_unitaire * (1 - l.remise / 100) * 1000) / 1000,
+      montant_ht: Math.round(l.quantite * normalizePrix(p) * (1 - l.remise / 100) * 1000) / 1000,
     }));
   }, [produits]);
 
@@ -341,6 +375,20 @@ export function DocumentForm({
     if (!entreprise)        { setToast({ msg: "Aucune entreprise trouvée.",        type: "error" }); return false; }
     if (lignes.length === 0) { setToast({ msg: "Ajoutez au moins une ligne.",       type: "error" }); return false; }
     if (lignes.some(l => !l.product_id)) { setToast({ msg: "Chaque ligne doit avoir un produit.", type: "error" }); return false; }
+    const ligneStockInsuffisant = lignes.find((l) => {
+      const produit = produits.find((p) => p.id === l.product_id);
+      return produit?.source_catalogue === "STOCK"
+        && produit.stock_disponible !== undefined
+        && l.quantite > produit.stock_disponible;
+    });
+    if (ligneStockInsuffisant) {
+      const produit = produits.find((p) => p.id === ligneStockInsuffisant.product_id);
+      setToast({
+        msg: `Stock insuffisant pour ${produit?.designation ?? "ce produit"}. Disponible : ${produit?.stock_disponible ?? 0}.`,
+        type: "error",
+      });
+      return false;
+    }
     return true;
   };
 
@@ -526,7 +574,10 @@ export function DocumentForm({
                             className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-slate-900 transition">
                             <option value="">Choisir un produit…</option>
                             {produits.map(p => (
-                              <option key={p.id} value={p.id}>{p.designation}</option>
+                              <option key={p.id} value={p.id}>
+                                {p.designation}
+                                {p.source_catalogue === "STOCK" ? ` — Stock: ${p.stock_disponible ?? 0}` : ""}
+                              </option>
                             ))}
                           </select>
                         </div>

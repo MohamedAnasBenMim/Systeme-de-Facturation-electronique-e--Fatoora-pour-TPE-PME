@@ -15,7 +15,11 @@ import {
   Landmark,
   FolderOpen,
   Languages,
+  ExternalLink,
 } from "lucide-react";
+
+const stockDashboardUrl =
+  (import.meta as any).env?.VITE_STOCK_DASHBOARD_URL || "http://localhost:5174/dashboard";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
@@ -83,6 +87,16 @@ export function Sidebar() {
             </Link>
           );
         })}
+
+        <a
+          href={stockDashboardUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors text-gray-700 hover:bg-gray-50"
+        >
+          <ExternalLink className="w-5 h-5" />
+          <span className="text-sm">Dashboard Stock</span>
+        </a>
 
         {/* Section Vente */}
         <div className="pt-2">

@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     ENTREPRISE_SERVICE_URL: str
     DEPENSES_SERVICE_URL: str
     ACHATS_SERVICE_URL: str
+    STOCK_SERVICE_URL: str = "http://service-stock:8003"
+    MOUVEMENT_SERVICE_URL: str = "http://service-mouvement:8004"
+    INTEGRATION_SERVICE_SECRET: str = ""
     GATEWAY_PORT: int = 8000
     SECRET_KEY: str
     ALGORITHM:str

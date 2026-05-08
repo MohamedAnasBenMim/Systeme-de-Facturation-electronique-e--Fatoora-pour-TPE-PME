@@ -5,15 +5,14 @@ import { ClerkProvider } from "@clerk/clerk-react";
 import { frFR } from "@clerk/localizations"; 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-if (!PUBLISHABLE_KEY) {
-  throw new Error("Clerk Publishable Key manquante dans .env");
-}
+const root = createRoot(document.getElementById("root")!);
 
-createRoot(document.getElementById("root")!).render(
-  <ClerkProvider 
-    publishableKey={PUBLISHABLE_KEY}
-    localization={frFR}          // popup Google en français
-  >
-    <App />
-  </ClerkProvider>
-);
+if (PUBLISHABLE_KEY) {
+  root.render(
+    <ClerkProvider publishableKey={PUBLISHABLE_KEY} localization={frFR}>
+      <App />
+    </ClerkProvider>
+  );
+} else {
+  root.render(<App />);
+}

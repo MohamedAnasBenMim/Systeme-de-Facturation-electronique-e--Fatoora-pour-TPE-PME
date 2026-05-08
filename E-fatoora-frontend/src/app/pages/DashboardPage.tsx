@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import { TrendingUp, TrendingDown, DollarSign, FileText, Plus, Loader2, AlertCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -92,6 +93,7 @@ function ErrorBanner({ message }: { message: string }) {
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function DashboardPage() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [clients, setClients] = useState<ClientFidele[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,11 +189,11 @@ export function DashboardPage() {
           <p className="text-gray-500 mt-1">Bienvenue, Ahmed !</p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline">
+          <Button variant="outline" onClick={() => navigate("/clients")}>
             <Plus className="w-4 h-4 mr-2" />
             Ajouter client
           </Button>
-          <Button>
+          <Button onClick={() => navigate("/invoices?new=1")}>
             <Plus className="w-4 h-4 mr-2" />
             Créer facture
           </Button>
