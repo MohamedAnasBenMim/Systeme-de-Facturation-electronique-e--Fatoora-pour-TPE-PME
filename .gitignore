@@ -11,4 +11,42 @@ __pycache__/
 *.db
 *.sqlite3
 .DS_Store
+<<<<<<< HEAD
 Thumbs.db
+=======
+Thumbs.db
+
+# React 
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+package-lock.json
+ 
+# Build React
+frontend/dist/
+frontend/build/
+ 
+
+.eslintcache
+.stylelintcache
+ 
+
+frontend/.env
+frontend/.env.local
+frontend/.env.development
+frontend/.env.production
+ 
+frontend/.vite/
+ 
+
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+ 
+>>>>>>> e-fatoora/backend-frontend
