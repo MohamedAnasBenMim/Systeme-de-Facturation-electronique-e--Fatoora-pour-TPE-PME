@@ -1,0 +1,153 @@
+# app/schemas.py — service_auth/
+# Validation des données JSON avec Pydantic
+
+from pydantic import BaseModel, Field, validator
+from typing import Optional
+from datetime import datetime
+from enum import Enum
+
+
+# ══════════════════════════════════════════════════════════
+# ÉNUMÉRATIONS
+# ══════════════════════════════════════════════════════════
+class RoleEnum(str, Enum):
+    admin        = "admin"
+    gestionnaire = "gestionnaire"
+    operateur    = "operateur"
+
+
+# ══════════════════════════════════════════════════════════
+# SCHEMAS AUTHENTIFICATION
+# ══════════════════════════════════════════════════════════
+class LoginRequest(BaseModel):
+    """Données reçues pour le login."""
+    email:    str = Field(..., description="Email de l'utilisateur")
+    password: str = Field(..., min_length=6, description="Mot de passe")
+
+
+class TokenResponse(BaseModel):
+    """Token JWT retourné après login."""
+    access_token: str
+    token_type:   str = "bearer"
+    expires_in:   int
+    user_id:      int
+    role:         str
+
+
+# ══════════════════════════════════════════════════════════
+# SCHEMAS UTILISATEUR
+# ══════════════════════════════════════════════════════════
+class UtilisateurCreate(BaseModel):
+    """Données reçues pour créer un utilisateur."""
+    nom:      str = Field(..., min_length=2, max_length=100)
+    prenom:   str = Field(..., min_length=2, max_length=100)
+    email:    str = Field(..., description="Email unique")
+    password: str = Field(..., min_length=6)
+    role:     RoleEnum = RoleEnum.operateur
+    salaire:  Optional[float] = Field(None, ge=0, description="Salaire mensuel en DT")
+
+    @validator("email")
+    def email_lowercase(cls, v: str) -> str:
+        return v.lower().strip()
+
+    @validator("password")
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("Mot de passe trop court (minimum 6 caractères)")
+        return v
+
+
+class UtilisateurUpdate(BaseModel):
+    """Données reçues pour modifier un utilisateur."""
+    nom:       Optional[str]       = None
+    prenom:    Optional[str]       = None
+    email:     Optional[str]       = None
+    role:      Optional[RoleEnum]  = None
+    est_actif: Optional[bool]      = None
+    salaire:   Optional[float]     = Field(None, ge=0)
+
+
+class UtilisateurResponse(BaseModel):
+    """Données retournées par l'API pour un utilisateur."""
+    id:         int
+    nom:        str
+    prenom:     str
+    email:      str
+    role:       str
+    salaire:    Optional[float]
+    est_actif:  bool
+    created_at: datetime
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+class SalaireEmploye(BaseModel):
+    """Détail du salaire d'un employé."""
+    id:      int
+    nom:     str
+    prenom:  str
+    role:    str
+    salaire: float
+
+
+class SalairesStatsResponse(BaseModel):
+    """Résumé des salaires de tous les employés actifs."""
+    total_salaires : float
+    nb_employes    : int
+    detail         : list[SalaireEmploye]
+
+
+class ForgotPasswordRequest(BaseModel):
+    """Données reçues pour demander une réinitialisation du mot de passe."""
+    email: str = Field(..., description="Email de l'utilisateur")
+
+    @validator("email")
+    def email_lowercase(cls, v: str) -> str:
+        return v.lower().strip()
+
+
+class ForgotPasswordResponse(BaseModel):
+    """Réponse après demande de reset : session JWT à renvoyer pour valider l'OTP."""
+    message:       str
+    session_token: Optional[str] = None  # None si email inconnu (sécurité)
+
+
+class ResetPasswordRequest(BaseModel):
+    """Valider le code OTP et définir le nouveau mot de passe."""
+    session_token:    str = Field(..., description="JWT de session retourné par /forgot-password")
+    otp_code:         str = Field(..., min_length=6, max_length=6, description="Code à 6 chiffres reçu par email")
+    nouveau_password: str = Field(..., min_length=6)
+
+
+class ClerkLoginRequest(BaseModel):
+    """Connexion via Google OAuth (Clerk) — échange token Clerk contre JWT backend."""
+    clerk_user_id: str         # ID Clerk (user_xxx) pour vérification via API officielle
+    clerk_token:   str = ""    # token JWT Clerk (fallback)
+    email:         str = ""
+    prenom:        str = ""
+    nom:           str = ""
+
+
+class ChangePasswordRequest(BaseModel):
+    """Données reçues pour changer le mot de passe."""
+    ancien_password:  str = Field(..., min_length=6)
+    nouveau_password: str = Field(..., min_length=6)
+
+    @validator("nouveau_password")
+    def passwords_different(cls, v: str, values: dict) -> str:
+        if "ancien_password" in values and v == values["ancien_password"]:
+            raise ValueError(
+                "Le nouveau mot de passe doit être différent de l'ancien"
+            )
+        return v
+
+
+# ══════════════════════════════════════════════════════════
+# SCHEMAS GÉNÉRIQUES
+# ══════════════════════════════════════════════════════════
+class MessageResponse(BaseModel):
+    """Réponse simple avec un message."""
+    message: str
+    success: bool = True

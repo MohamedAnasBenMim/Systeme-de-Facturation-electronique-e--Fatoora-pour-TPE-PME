@@ -1,0 +1,56 @@
+# main.py — service_stock/
+# Point d'entrée FastAPI du Stock Service
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.database import engine, Base, ensure_stock_schema
+from app.routes import router
+
+
+# ── Créer les tables PostgreSQL au démarrage ───────────────
+Base.metadata.create_all(bind=engine)
+ensure_stock_schema()
+
+
+# ── Application FastAPI ────────────────────────────────────
+app = FastAPI(
+    title=f"{settings.SERVICE_NAME} — SGS SaaS",
+    description="Gestion des stocks multi-entrepôts en temps réel",
+    version="1.0.0",
+    debug=settings.DEBUG,
+    # Swagger désactivé en production
+    docs_url="/docs"   if settings.ENVIRONMENT != "production" else None,
+    redoc_url="/redoc" if settings.ENVIRONMENT != "production" else None,
+)
+
+
+# ── CORS ───────────────────────────────────────────────────
+_DEV_ORIGINS = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:3000",  "http://127.0.0.1:3000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins = ["*"] if settings.ENVIRONMENT != "production" else ["https://sgs-saas.tn"],
+    allow_methods  = ["*"],
+    allow_headers  = ["*"],
+)
+
+
+# ── Routes ─────────────────────────────────────────────────
+app.include_router(router, prefix="/api/v1")
+
+
+# ── Health check ───────────────────────────────────────────
+@app.get("/health", tags=["Health"])
+async def health_check():
+    return {
+        "service":     settings.SERVICE_NAME,
+        "status":      "ok",
+        "environment": settings.ENVIRONMENT,
+        "version":     "1.0.0",
+        "port":        settings.SERVICE_PORT,
+    }
